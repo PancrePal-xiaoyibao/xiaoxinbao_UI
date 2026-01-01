@@ -18,6 +18,8 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'No text provided' }, { status: 400 });
         }
 
+        console.log('TTS Request - Text length:', text.length, 'Model:', TTS_MODEL);
+
         // Clean text: remove markdown symbols
         const cleanText = text.replace(/[#*`_~\[\]()]/g, '').replace(/1\.|2\.|3\.|4\./g, '');
 
@@ -38,10 +40,17 @@ export async function POST(req: NextRequest) {
         });
 
         if (!response.ok) {
-            const err = await response.text();
-            return NextResponse.json({ error: `Alibaba TTS Error: ${err}` }, { status: response.status });
+            const errText = await response.text();
+            console.error('Alibaba TTS API Error:', response.status, errText);
+            try {
+                const errJson = JSON.parse(errText);
+                return NextResponse.json({ error: `Alibaba TTS Error: ${JSON.stringify(errJson)}` }, { status: response.status });
+            } catch {
+                return NextResponse.json({ error: `Alibaba TTS Error: ${errText}` }, { status: response.status });
+            }
         }
 
+        console.log('TTS Response OK');
         return new Response(response.body, {
             headers: {
                 'Content-Type': 'audio/mpeg',
@@ -50,6 +59,6 @@ export async function POST(req: NextRequest) {
 
     } catch (error) {
         console.error('TTS Route Error:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return NextResponse.json({ error: `Internal Server Error: ${error instanceof Error ? error.message : 'Unknown error'}` }, { status: 500 });
     }
 }
