@@ -1,0 +1,104 @@
+---
+globs: *.ts,*.tsx
+description: TypeScript 和 React 开发规范
+---
+
+# TypeScript & React 开发规范
+
+## TypeScript 规范
+
+### 类型定义
+- **必须**为所有函数参数和返回值定义类型
+- 使用 `interface` 定义对象类型，使用 `type` 定义联合类型和工具类型
+- 避免使用 `any`，优先使用 `unknown` 或具体类型
+- 使用泛型提高代码复用性
+
+### 严格模式
+- 启用 `strict: true` 配置
+- 使用 `as const` 确保类型推断的精确性
+- 使用类型守卫（type guards）进行类型收窄
+
+### 路径别名
+- 使用 `@/*` 别名引用 `src/*` 目录下的文件
+- 示例：`import { useChatStore } from '@/store/useChatStore'`
+
+## React 规范
+
+### 组件结构
+- 使用函数组件和 Hooks
+- 组件文件使用 PascalCase 命名（如 `ChatInterface.tsx`）
+- 组件内部按以下顺序组织：
+  1. Imports
+  2. Types/Interfaces
+  3. Component definition
+  4. Hooks (useState, useEffect, etc.)
+  5. Event handlers
+  6. Derived values (useMemo, useCallback)
+  7. Effects
+  8. Render
+
+### Hooks 使用规范
+- **必须**在组件顶层调用 Hooks
+- 使用 `useMemo` 缓存计算结果
+- 使用 `useCallback` 缓存函数引用
+- 使用 `useRef` 存储可变值，避免触发重渲染
+- 清理副作用：`useEffect` 返回清理函数
+
+### 状态管理
+- 简单状态使用 `useState`
+- 复杂状态或跨组件共享使用 Zustand（如 [useChatStore.ts](mdc:src/store/useChatStore.ts)）
+- 避免过度使用 Context，优先使用状态管理库
+
+### 性能优化
+- 使用 `React.memo` 包装纯组件
+- 使用 `useMemo` 和 `useCallback` 避免不必要的重渲染
+- 懒加载路由和大型组件
+- 使用 `'use client'` 指令标记客户端组件（Next.js）
+
+### 事件处理
+- 事件处理函数使用 `handle` 前缀（如 `handleSend`, `handleCopy`）
+- 使用箭头函数或 `useCallback` 定义事件处理函数
+- 正确处理异步操作和错误
+
+## 代码风格
+
+### 命名规范
+- 组件：PascalCase（`ChatInterface`）
+- 函数/变量：camelCase（`handleSend`, `isLoading`）
+- 常量：UPPER_SNAKE_CASE（`API_BASE_URL`）
+- 类型/接口：PascalCase（`Message`, `ChatState`）
+
+### 注释规范
+- 使用中文注释说明复杂逻辑
+- 函数使用 JSDoc 注释说明参数和返回值
+- 关键业务逻辑必须添加注释
+
+### 导入顺序
+1. React 相关
+2. 第三方库
+3. 项目内部组件
+4. 工具函数
+5. 类型定义
+6. 样式文件
+
+示例：
+```typescript
+import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { useChatStore } from '@/store/useChatStore';
+import { cn } from '@/lib/utils';
+import type { Message } from '@/store/useChatStore';
+```
+
+## 错误处理
+
+- 使用 try-catch 处理异步错误
+- 提供用户友好的错误提示
+- 记录错误日志便于调试
+- 使用错误边界（Error Boundary）捕获组件错误
+
+## 测试建议
+
+- 为关键业务逻辑编写单元测试
+- 使用 React Testing Library 测试组件
+- 测试用户交互流程，而非实现细节
