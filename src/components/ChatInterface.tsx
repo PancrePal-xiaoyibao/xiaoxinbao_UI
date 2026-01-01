@@ -135,30 +135,97 @@ export default function ChatInterface() {
     setVoiceStatus('processing');
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
     try {
+      // Step 1: Speech-to-Text
       const formData = new FormData();
       formData.append('file', audioBlob);
       const sttRes = await fetch('/api/stt', { method: 'POST', body: formData });
-      const { text } = await sttRes.json();
-      if (!text) { setVoiceStatus('idle'); return; }
 
+      if (!sttRes.ok) {
+        const errorData = await sttRes.json();
+        console.error('STT Error:', errorData);
+        alert('语音识别失败: ' + (errorData.error || '未知错误'));
+        setVoiceStatus('idle');
+        return;
+      }
+
+      const { text } = await sttRes.json();
+      if (!text) {
+        alert('未能识别到语音内容，请重试');
+        setVoiceStatus('idle');
+        return;
+      }
+
+      // Step 2: Add user message and get AI response (streaming)
       addMessage('user', text);
+      const apiMessages = [...messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: text }];
+
       const chatRes = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: text }],
-          stream: false
-        }),
+        body: JSON.stringify({ messages: apiMessages, stream: true }),
       });
-      const chatData = await chatRes.json();
-      const aiText = chatData.choices?.[0]?.message?.content || '';
-      addMessage('assistant', aiText);
+
+      if (!chatRes.ok) {
+        const errorText = await chatRes.text();
+        console.error('Chat API Error:', errorText);
+        addMessage('assistant', '抱歉，小馨宝现在有点累了，请稍后再试。');
+        setVoiceStatus('idle');
+        return;
+      }
+
+      // Step 3: Parse streaming response
+      addMessage('assistant', '');
+      const reader = chatRes.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        addMessage('assistant', '抱歉，小馨宝现在有点累了,请稍后再试。');
+        setVoiceStatus('idle');
+        return;
+      }
+
+      let fullText = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6);
+            if (dataStr === '[DONE]') continue;
+            try {
+              const data = JSON.parse(dataStr);
+              const content = data.choices?.[0]?.delta?.content || '';
+              if (content) {
+                fullText += content;
+                appendTokenToLastMessage(content);
+              }
+            } catch (e) {
+              // Ignore invalid JSON
+            }
+          }
+        }
+      }
+
+      // Step 4: Text-to-Speech
+      if (!fullText) {
+        setVoiceStatus('idle');
+        return;
+      }
 
       const ttsRes = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiText }),
+        body: JSON.stringify({ text: fullText }),
       });
+
+      if (!ttsRes.ok) {
+        console.error('TTS Error:', await ttsRes.text());
+        setVoiceStatus('idle');
+        return;
+      }
+
       const audioBlobOutput = await ttsRes.blob();
       const audioUrl = URL.createObjectURL(audioBlobOutput);
       if (audioPlayerRef.current) {
@@ -171,6 +238,8 @@ export default function ChatInterface() {
         };
       }
     } catch (err) {
+      console.error('Voice Flow Error:', err);
+      alert('语音对话出错: ' + (err instanceof Error ? err.message : '未知错误'));
       setVoiceStatus('idle');
     }
   };
