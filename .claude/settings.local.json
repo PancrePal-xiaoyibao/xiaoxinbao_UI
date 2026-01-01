@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/generate-certs.sh:*)",
+      "Bash(npm run dev:*)",
+      "Bash(pkill:*)",
+      "Bash(npm install:*)",
+      "Bash(npx node-pre-gyp install:*)",
+      "Bash(npm rebuild:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

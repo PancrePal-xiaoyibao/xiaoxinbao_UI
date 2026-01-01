@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_ENV=development node dev-server.js",
+    "dev:https": "HTTPS=true NODE_ENV=development node dev-server.js",
+    "dev:legacy": "next dev -H 0.0.0.0",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "next start -H 0.0.0.0",
+    "lint": "eslint",
+    "certs": "bash ./scripts/generate-certs.sh"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",

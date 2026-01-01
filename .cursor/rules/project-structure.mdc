@@ -1,0 +1,117 @@
+---
+alwaysApply: true
+description: 项目结构指南和文件组织规范
+---
+
+# 项目结构指南
+
+## 项目概述
+
+这是一个基于 Next.js 16 + React 19 + TypeScript 的聊天应用（小馨宝），使用 Tailwind CSS 和 Framer Motion 构建现代化 UI。
+
+## 核心文件
+
+### 配置文件
+- [package.json](mdc:package.json) - 项目依赖和脚本
+- [tsconfig.json](mdc:tsconfig.json) - TypeScript 配置，路径别名 `@/*` 映射到 `src/*`
+- [next.config.ts](mdc:next.config.ts) - Next.js 配置
+- [eslint.config.mjs](mdc:eslint.config.mjs) - ESLint 配置
+
+### 入口文件
+- [src/app/layout.tsx](mdc:src/app/layout.tsx) - 根布局组件
+- [src/app/page.tsx](mdc:src/app/page.tsx) - 首页组件，包含欢迎模态框和聊天界面切换逻辑
+
+## 目录结构
+
+### src/app/
+Next.js App Router 目录：
+- `app/api/` - API 路由
+  - `chat/route.ts` - 聊天 API 端点，支持流式响应
+  - `stt/route.ts` - 语音转文字 API
+  - `tts/route.ts` - 文字转语音 API
+- `app/layout.tsx` - 根布局
+- `app/page.tsx` - 首页
+- `app/globals.css` - 全局样式
+
+### src/components/
+React 组件目录：
+- [ChatInterface.tsx](mdc:src/components/ChatInterface.tsx) - 主聊天界面组件
+  - 支持文字和语音输入
+  - 流式消息显示
+  - 语音对话模式
+  - Markdown 渲染
+- [Sidebar.tsx](mdc:src/components/Sidebar.tsx) - 侧边栏组件（会话管理）
+- [WelcomeModal.tsx](mdc:src/components/WelcomeModal.tsx) - 欢迎模态框
+
+### src/store/
+状态管理目录：
+- [useChatStore.ts](mdc:src/store/useChatStore.ts) - Zustand 状态管理
+  - 会话管理
+  - 消息存储
+  - 持久化支持
+
+### src/lib/
+工具函数目录：
+- [utils.ts](mdc:src/lib/utils.ts) - 工具函数（如 `cn` 用于合并 Tailwind 类名）
+
+## 技术栈
+
+### 核心框架
+- **Next.js 16.1.1** - React 框架，使用 App Router
+- **React 19.2.3** - UI 库
+- **TypeScript 5** - 类型安全
+
+### UI 和样式
+- **Tailwind CSS 4** - 实用优先的 CSS 框架
+- **Framer Motion 12** - 动画库
+- **Lucide React** - 图标库
+
+### 状态管理
+- **Zustand 5** - 轻量级状态管理
+
+### 其他
+- **React Markdown** - Markdown 渲染
+- **clsx** + **tailwind-merge** - 类名工具
+
+## 开发规范
+
+### 文件命名
+- 组件文件：PascalCase（如 `ChatInterface.tsx`）
+- 工具文件：camelCase（如 `useChatStore.ts`）
+- 配置文件：kebab-case（如 `next.config.ts`）
+
+### 导入路径
+- 使用 `@/*` 别名引用 `src/*` 目录
+- 示例：`import { useChatStore } from '@/store/useChatStore'`
+
+### 组件组织
+- 每个组件一个文件
+- 相关组件可以放在同一目录
+- 大型组件拆分为更小的子组件
+
+## API 端点
+
+### /api/chat
+- **方法**: POST
+- **功能**: 处理聊天消息，支持流式响应
+- **请求体**: `{ messages: Array, stream: boolean }`
+
+### /api/stt
+- **方法**: POST
+- **功能**: 语音转文字
+- **请求体**: FormData（包含音频文件）
+
+### /api/tts
+- **方法**: POST
+- **功能**: 文字转语音
+- **请求体**: `{ text: string }`
+
+## 状态管理结构
+
+使用 Zustand 管理以下状态：
+- 会话列表（sessions）
+- 当前活动会话（activeSessionId）
+- 消息列表（messages）
+- 加载状态（isLoading）
+
+状态持久化使用 `persist` 中间件，存储在 localStorage。
