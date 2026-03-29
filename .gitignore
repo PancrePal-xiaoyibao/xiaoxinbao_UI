@@ -57,3 +57,5 @@ Desktop.ini
 # Agent-specific (if any)
 .agent/
 .gemini/
+.claude/
+docs/

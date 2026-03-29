@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useChatStore, Message } from '@/store/useChatStore';
 import { Send, Mic, User, Bot, Menu, Copy, Check, Download, Volume2, MessageSquare, X, Loader2, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { parseSSEStream } from '@/lib/sse';
 import Sidebar from './Sidebar';
 
 export default function ChatInterface() {
@@ -18,25 +19,31 @@ export default function ChatInterface() {
     setLoading
   } = useChatStore();
 
-  // Component States
+  // 组件状态
   const [input, setInput] = useState('');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
-  const [isListening, setIsListening] = useState(false); // Native SpeechRecognition State
-  const [isVoiceMode, setIsVoiceMode] = useState(false); // TTS broadcast toggle
-  const [isVoiceUIMode, setIsVoiceUIMode] = useState(false); // Immersive UI Mode
+  const [isListening, setIsListening] = useState(false);
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [isVoiceUIMode, setIsVoiceUIMode] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Refs
+  // 引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isSendingRef = useRef(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const autoSendTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isVoiceModeRef = useRef(isVoiceMode);
 
-  // Derived Values
+  // 同步 isVoiceMode 到 ref，避免 useEffect 重建 recognition
+  useEffect(() => {
+    isVoiceModeRef.current = isVoiceMode;
+  }, [isVoiceMode]);
+
+  // 派生数据
   const currentSession = useMemo(() =>
     sessions.find(s => s.id === activeSessionId),
     [sessions, activeSessionId]
@@ -44,11 +51,11 @@ export default function ChatInterface() {
   const messages = currentSession?.messages || [];
   const lastMessageContent = messages.length > 0 ? messages[messages.length - 1].content : '';
 
-  // --- TTS Synthesis Helper (Client Side) ---
-  const speak = (text: string) => {
+  // --- 浏览器原生 TTS ---
+  const speak = useCallback((text: string) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const cleanText = text.replace(/[#*`_~\[\]()]/g, '').replace(/1\.|2\.|3\.|4\./g, '');
+    const cleanText = text.replace(/[#*`_~\[\]()]/g, '').replace(/\d+[.、]/g, '');
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'zh-CN';
     utterance.rate = 1.0;
@@ -57,40 +64,77 @@ export default function ChatInterface() {
     const preferredVoice = voices.find(v => v.lang === 'zh-CN');
     if (preferredVoice) utterance.voice = preferredVoice;
     window.speechSynthesis.speak(utterance);
-  };
+  }, []);
 
-  // --- Native Speech Recognition (for Text Mode Mic) ---
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.interimResults = true;
-        recognitionRef.current.lang = 'zh-CN';
+  // --- 发送聊天消息并解析流式响应 ---
+  const sendChatAndStream = useCallback(async (
+    userText: string,
+    currentMessages: Message[]
+  ): Promise<string> => {
+    const apiMessages = [
+      ...currentMessages.map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content: userText },
+    ];
 
-        recognitionRef.current.onresult = (event: any) => {
-          let finalTranscript = '';
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
-          }
-          if (finalTranscript) {
-            setInput(prev => prev + finalTranscript);
-            if (isVoiceMode) {
-              if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
-              autoSendTimerRef.current = setTimeout(() => handleSend(), 800);
-            }
-          }
-        };
-        recognitionRef.current.onend = () => setIsListening(false);
-        recognitionRef.current.onerror = () => setIsListening(false);
-      }
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: apiMessages, stream: true }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`聊天服务错误: ${response.status}`);
     }
-  }, [isVoiceMode]);
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('无法读取响应流');
+    }
+
+    return parseSSEStream(reader, appendTokenToLastMessage);
+  }, [appendTokenToLastMessage]);
+
+  // --- 浏览器原生语音识别（仅初始化一次） ---
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) return;
+
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'zh-CN';
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        }
+      }
+      if (finalTranscript) {
+        setInput(prev => prev + finalTranscript);
+        if (isVoiceModeRef.current) {
+          if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
+          autoSendTimerRef.current = setTimeout(() => handleSend(), 800);
+        }
+      }
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      recognition.abort();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleNativeMic = async () => {
     if (!recognitionRef.current) {
-      alert('您的浏览器暂不支持原生语音。');
+      alert('您的浏览器暂不支持语音识别。');
       return;
     }
     if (isListening) {
@@ -102,13 +146,13 @@ export default function ChatInterface() {
         stream.getTracks().forEach(t => t.stop());
         recognitionRef.current.start();
         setIsListening(true);
-      } catch (err) {
+      } catch {
         alert('无法访问麦克风。');
       }
     }
   };
 
-  // --- API-based Voice Flow (Immersive Mode) ---
+  // --- 沉浸式语音模式（API 方式） ---
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -119,13 +163,13 @@ export default function ChatInterface() {
       recorder.onstop = handleAudioStop;
       recorder.start();
       setVoiceStatus('recording');
-    } catch (err) {
+    } catch {
       alert('麦克风启动失败。');
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+    if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
     }
@@ -134,15 +178,15 @@ export default function ChatInterface() {
   const handleAudioStop = async () => {
     setVoiceStatus('processing');
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+
     try {
-      // Step 1: Speech-to-Text
+      // 第 1 步：语音转文字
       const formData = new FormData();
       formData.append('file', audioBlob);
       const sttRes = await fetch('/api/stt', { method: 'POST', body: formData });
 
       if (!sttRes.ok) {
         const errorData = await sttRes.json();
-        console.error('STT Error:', errorData);
         alert('语音识别失败: ' + (errorData.error || '未知错误'));
         setVoiceStatus('idle');
         return;
@@ -155,60 +199,20 @@ export default function ChatInterface() {
         return;
       }
 
-      // Step 2: Add user message and get AI response (streaming)
+      // 第 2 步：发送消息并获取流式响应
       addMessage('user', text);
-      const apiMessages = [...messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: text }];
+      addMessage('assistant', '');
 
-      const chatRes = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: apiMessages, stream: true }),
-      });
-
-      if (!chatRes.ok) {
-        const errorText = await chatRes.text();
-        console.error('Chat API Error:', errorText);
+      let fullText: string;
+      try {
+        fullText = await sendChatAndStream(text, messages);
+      } catch {
         addMessage('assistant', '抱歉，小馨宝现在有点累了，请稍后再试。');
         setVoiceStatus('idle');
         return;
       }
 
-      // Step 3: Parse streaming response
-      addMessage('assistant', '');
-      const reader = chatRes.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        addMessage('assistant', '抱歉，小馨宝现在有点累了,请稍后再试。');
-        setVoiceStatus('idle');
-        return;
-      }
-
-      let fullText = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
-            if (dataStr === '[DONE]') continue;
-            try {
-              const data = JSON.parse(dataStr);
-              const content = data.choices?.[0]?.delta?.content || '';
-              if (content) {
-                fullText += content;
-                appendTokenToLastMessage(content);
-              }
-            } catch (e) {
-              // Ignore invalid JSON
-            }
-          }
-        }
-      }
-
-      // Step 4: Text-to-Speech
+      // 第 3 步：文字转语音
       if (!fullText) {
         setVoiceStatus('idle');
         return;
@@ -221,7 +225,7 @@ export default function ChatInterface() {
       });
 
       if (!ttsRes.ok) {
-        console.error('TTS Error:', await ttsRes.text());
+        console.error('TTS 错误:', await ttsRes.text());
         setVoiceStatus('idle');
         return;
       }
@@ -238,13 +242,13 @@ export default function ChatInterface() {
         };
       }
     } catch (err) {
-      console.error('Voice Flow Error:', err);
+      console.error('语音对话流程错误:', err);
       alert('语音对话出错: ' + (err instanceof Error ? err.message : '未知错误'));
       setVoiceStatus('idle');
     }
   };
 
-  // --- Core Chat Handlers ---
+  // --- 核心发送处理 ---
   const handleSend = async (overrideText?: string) => {
     const userText = overrideText || input.trim();
     if (!userText || isLoading || isSendingRef.current || !activeSessionId) return;
@@ -257,54 +261,24 @@ export default function ChatInterface() {
     isSendingRef.current = true;
     if (!overrideText) setInput('');
     addMessage('user', userText);
+    addMessage('assistant', '');
     setLoading(true);
 
     try {
-      const apiMessages = [...messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: userText }];
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: apiMessages, stream: true }),
-      });
+      const fullText = await sendChatAndStream(userText, messages);
 
-      if (!response.ok) throw new Error(response.statusText);
-      addMessage('assistant', '');
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) return;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
-            if (dataStr === '[DONE]') continue;
-            try {
-              const data = JSON.parse(dataStr);
-              const content = data.choices?.[0]?.delta?.content || '';
-              if (content) appendTokenToLastMessage(content);
-            } catch (e) { }
-          }
-        }
+      if (isVoiceModeRef.current && fullText) {
+        speak(fullText);
       }
-
-      if (isVoiceMode) {
-        const updatedMessages = useChatStore.getState().sessions.find(s => s.id === activeSessionId)?.messages;
-        const fullText = updatedMessages?.[updatedMessages.length - 1]?.content;
-        if (fullText) speak(fullText);
-      }
-    } catch (error) {
-      addMessage('assistant', '小馨宝现在有点累。');
+    } catch {
+      appendTokenToLastMessage('小馨宝现在有点累了，请稍后再试。');
     } finally {
       setLoading(false);
       isSendingRef.current = false;
     }
   };
 
-  // UI Effects
+  // --- UI 效果 ---
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
   };
@@ -345,7 +319,7 @@ export default function ChatInterface() {
     return options;
   };
 
-  // --- Render Sections ---
+  // --- 沉浸式语音 UI ---
   if (isVoiceUIMode) {
     return (
       <div className="fixed inset-0 bg-stone-900 z-50 flex flex-col items-center justify-between p-8 text-white">
@@ -397,6 +371,7 @@ export default function ChatInterface() {
     );
   }
 
+  // --- 主聊天界面 ---
   return (
     <div className="flex h-[100dvh] bg-cream-100 text-stone-800 transition-colors duration-500 overflow-hidden">
       <Sidebar isOpen={isSidebarOpen} onClose={() => setSidebarOpen(false)} />
@@ -464,7 +439,6 @@ export default function ChatInterface() {
                       "flex max-w-[90%] md:max-w-[80%] gap-4",
                       msg.role === 'user' ? "flex-row-reverse" : "flex-row"
                     )}>
-                      {/* Avatar */}
                       <motion.div
                         whileHover={{ scale: 1.1 }}
                         className={cn(
@@ -477,7 +451,6 @@ export default function ChatInterface() {
                         {msg.role === 'user' ? <User size={20} /> : <Bot size={20} />}
                       </motion.div>
 
-                      {/* Bubble */}
                       <div className={cn(
                         "relative p-5 rounded-[2rem] shadow-sm text-sm md:text-base leading-relaxed break-words group",
                         msg.role === 'user'
@@ -492,7 +465,6 @@ export default function ChatInterface() {
                           <p className="whitespace-pre-wrap">{msg.content}</p>
                         )}
 
-                        {/* Bubble Actions */}
                         <div className={cn(
                           "absolute bottom-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2",
                           msg.role === 'user' ? "right-full mr-2" : "left-full ml-2"
@@ -508,7 +480,6 @@ export default function ChatInterface() {
                       </div>
                     </div>
 
-                    {/* Options Detection & Rendering */}
                     {options.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2 ml-14 max-w-[85%]">
                         {options.map((opt) => (
