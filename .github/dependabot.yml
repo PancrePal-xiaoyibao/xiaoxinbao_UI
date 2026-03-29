@@ -36,6 +36,19 @@ updates:
           - "@types/react"
           - "@types/react-dom"
 
+  # Go 后端依赖更新
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+
   # GitHub Actions 版本更新
   - package-ecosystem: github-actions
     directory: /

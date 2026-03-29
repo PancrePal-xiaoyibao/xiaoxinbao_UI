@@ -7,6 +7,12 @@ import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { parseSSEStream } from '@/lib/sse';
+import {
+  startAudioCapture,
+  type AudioCaptureSession,
+} from '@/lib/client/audio-capture';
+import { getApiURL } from '@/lib/client/api';
+import { SttStreamClient } from '@/lib/client/stt-stream';
 import Sidebar from './Sidebar';
 
 export default function ChatInterface() {
@@ -27,13 +33,15 @@ export default function ChatInterface() {
   const [isVoiceUIMode, setIsVoiceUIMode] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState('');
 
   // 引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isSendingRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const voiceCaptureRef = useRef<AudioCaptureSession | null>(null);
+  const sttStreamRef = useRef<SttStreamClient | null>(null);
+  const liveTranscriptRef = useRef('');
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const autoSendTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isVoiceModeRef = useRef(isVoiceMode);
@@ -42,6 +50,21 @@ export default function ChatInterface() {
   useEffect(() => {
     isVoiceModeRef.current = isVoiceMode;
   }, [isVoiceMode]);
+
+  useEffect(() => {
+    const audioPlayer = audioPlayerRef.current;
+
+    return () => {
+      if (autoSendTimerRef.current) {
+        clearTimeout(autoSendTimerRef.current);
+      }
+
+      recognitionRef.current?.abort();
+      sttStreamRef.current?.close();
+      void voiceCaptureRef.current?.stop();
+      audioPlayer?.pause();
+    };
+  }, []);
 
   // 派生数据
   const currentSession = useMemo(() =>
@@ -76,7 +99,7 @@ export default function ChatInterface() {
       { role: 'user', content: userText },
     ];
 
-    const response = await fetch('/api/chat', {
+    const response = await fetch(getApiURL('/api/chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: apiMessages, stream: true }),
@@ -153,51 +176,121 @@ export default function ChatInterface() {
   };
 
   // --- 沉浸式语音模式（API 方式） ---
+  const transcribeUploadedAudio = useCallback(async (audioBlob: Blob) => {
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'recording.wav');
+
+    const sttRes = await fetch(getApiURL('/api/stt'), {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!sttRes.ok) {
+      const errorData = await sttRes.json().catch(() => ({}));
+      throw new Error(errorData.error || '语音识别失败');
+    }
+
+    const { text } = await sttRes.json();
+    return typeof text === 'string' ? text.trim() : '';
+  }, []);
+
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => audioChunksRef.current.push(e.data);
-      recorder.onstop = handleAudioStop;
-      recorder.start();
+      window.speechSynthesis?.cancel();
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current.currentTime = 0;
+      }
+
+      setLiveTranscript('');
+      liveTranscriptRef.current = '';
+
+      const sttStream = new SttStreamClient();
+      sttStreamRef.current = sttStream;
+
+      void sttStream
+        .start({
+          language: 'zh-CN',
+          onTranscript: (payload) => {
+            if (!payload.text) {
+              return;
+            }
+
+            liveTranscriptRef.current = payload.text;
+            setLiveTranscript(payload.text);
+          },
+        })
+        .catch((error) => {
+          console.warn('STT WebSocket 不可用，将在停止录音后回退到上传识别:', error);
+          if (sttStreamRef.current === sttStream) {
+            sttStreamRef.current = null;
+          }
+          sttStream.close();
+        });
+
+      voiceCaptureRef.current = await startAudioCapture({
+        onChunk: (chunk) => {
+          sttStream.sendChunk(chunk);
+        },
+      });
+
       setVoiceStatus('recording');
     } catch {
+      sttStreamRef.current?.close();
+      sttStreamRef.current = null;
+      voiceCaptureRef.current = null;
       alert('麦克风启动失败。');
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === 'recording') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
-    }
-  };
+  const stopRecording = async () => {
+    const captureSession = voiceCaptureRef.current;
 
-  const handleAudioStop = async () => {
+    if (!captureSession) {
+      return;
+    }
+
     setVoiceStatus('processing');
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+    voiceCaptureRef.current = null;
+
+    const sttStream = sttStreamRef.current;
+    sttStreamRef.current = null;
 
     try {
-      // 第 1 步：语音转文字
-      const formData = new FormData();
-      formData.append('file', audioBlob);
-      const sttRes = await fetch('/api/stt', { method: 'POST', body: formData });
+      const { wavBlob, sampleCount } = await captureSession.stop();
+      let text = liveTranscriptRef.current.trim();
 
-      if (!sttRes.ok) {
-        const errorData = await sttRes.json();
-        alert('语音识别失败: ' + (errorData.error || '未知错误'));
-        setVoiceStatus('idle');
-        return;
+      if (sttStream) {
+        try {
+          const streamedText = (await sttStream.stop()).trim();
+          if (streamedText) {
+            text = streamedText;
+          }
+        } catch (error) {
+          console.warn('STT WebSocket 结束失败，回退到上传识别:', error);
+        } finally {
+          sttStream.close();
+        }
       }
 
-      const { text } = await sttRes.json();
+      if (!text) {
+        if (sampleCount === 0) {
+          alert('未检测到语音输入，请重试');
+          setVoiceStatus('idle');
+          return;
+        }
+
+        text = await transcribeUploadedAudio(wavBlob);
+      }
+
       if (!text) {
         alert('未能识别到语音内容，请重试');
         setVoiceStatus('idle');
         return;
       }
+
+      liveTranscriptRef.current = text;
+      setLiveTranscript(text);
 
       // 第 2 步：发送消息并获取流式响应
       addMessage('user', text);
@@ -218,7 +311,7 @@ export default function ChatInterface() {
         return;
       }
 
-      const ttsRes = await fetch('/api/tts', {
+      const ttsRes = await fetch(getApiURL('/api/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: fullText }),
@@ -242,6 +335,7 @@ export default function ChatInterface() {
         };
       }
     } catch (err) {
+      sttStream?.close();
       console.error('语音对话流程错误:', err);
       alert('语音对话出错: ' + (err instanceof Error ? err.message : '未知错误'));
       setVoiceStatus('idle');
@@ -324,7 +418,7 @@ export default function ChatInterface() {
     return (
       <div className="fixed inset-0 bg-stone-900 z-50 flex flex-col items-center justify-between p-8 text-white">
         <header className="w-full flex justify-between items-center">
-          <button onClick={() => { setIsVoiceUIMode(false); setVoiceStatus('idle'); stopRecording(); window.speechSynthesis?.cancel(); }} className="p-3 bg-white/10 rounded-full hover:bg-white/20 transition-colors">
+          <button onClick={() => { setIsVoiceUIMode(false); setVoiceStatus('idle'); void stopRecording(); window.speechSynthesis?.cancel(); }} className="p-3 bg-white/10 rounded-full hover:bg-white/20 transition-colors">
             <X size={24} />
           </button>
           <div className="flex flex-col items-center">
@@ -358,12 +452,17 @@ export default function ChatInterface() {
               {voiceStatus === 'processing' && "正在思考..."}
               {voiceStatus === 'speaking' && "小馨宝正在回应..."}
             </h2>
+            {liveTranscript && (
+              <p className="max-w-xl text-sm leading-7 text-stone-300">
+                {liveTranscript}
+              </p>
+            )}
           </div>
         </main>
 
         <footer className="w-full h-32 flex items-center justify-center">
           {voiceStatus === 'idle' && <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={startRecording} className="w-20 h-20 bg-teal-600 rounded-full flex items-center justify-center shadow-lg"><Mic size={32} /></motion.button>}
-          {voiceStatus === 'recording' && <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={stopRecording} className="w-20 h-20 bg-red-500 rounded-full flex items-center justify-center"><Square size={28} /></motion.button>}
+          {voiceStatus === 'recording' && <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => void stopRecording()} className="w-20 h-20 bg-red-500 rounded-full flex items-center justify-center"><Square size={28} /></motion.button>}
           {voiceStatus === 'speaking' && <button onClick={() => { if (audioPlayerRef.current) { audioPlayerRef.current.pause(); setVoiceStatus('idle'); } }} className="px-6 py-2 bg-white/10 rounded-full text-sm">跳过播放</button>}
           <audio ref={audioPlayerRef} className="hidden" />
         </footer>
@@ -389,7 +488,7 @@ export default function ChatInterface() {
             </h1>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={() => setIsVoiceUIMode(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border bg-stone-50 text-stone-500 border-stone-200"><Volume2 size={14} /><span>语音对话</span></button>
+            <button onClick={() => { setLiveTranscript(''); liveTranscriptRef.current = ''; setIsVoiceUIMode(true); }} className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border bg-stone-50 text-stone-500 border-stone-200"><Volume2 size={14} /><span>语音对话</span></button>
             <button onClick={() => { setIsVoiceMode(!isVoiceMode); if (!isVoiceMode) speak("语音模式已开启"); else window.speechSynthesis.cancel(); }} className={cn("flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border", isVoiceMode ? "bg-teal-50 text-teal-700 border-teal-200" : "bg-stone-50 text-stone-500 border-stone-200")}>{isVoiceMode ? <Volume2 size={14} /> : <MessageSquare size={14} />}<span>{isVoiceMode ? '语音播报中' : '文字模式'}</span></button>
             <div className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
           </div>
