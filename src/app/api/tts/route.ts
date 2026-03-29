@@ -1,24 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
+import {
+  cleanTtsText,
+  isTrustedOrigin,
+  MAX_TTS_TEXT_LENGTH,
+  synthesizeSpeech,
+  TtsError,
+} from '@/lib/server/tts';
 
-export const runtime = 'edge';
-
-const ALIBABA_API_KEY = process.env.ALIBABA_API_KEY;
-const ALIBABA_BASE_URL = process.env.ALIBABA_BASE_URL;
-const TTS_MODEL = process.env.ALIBABA_TTS_MODEL || 'qwen3-tts-flash';
-const TTS_VOICE = process.env.ALIBABA_TTS_VOICE || 'loongbella';
-
-/** 清理 Markdown 符号，提取纯文本用于语音合成 */
-function cleanMarkdown(text: string): string {
-  return text
-    .replace(/[#*`_~\[\]()]/g, '')
-    .replace(/\d+[.、]/g, '');
-}
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
-  if (!ALIBABA_API_KEY || !ALIBABA_BASE_URL) {
+  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host');
+  const origin = req.headers.get('origin');
+
+  if (!isTrustedOrigin(origin, host)) {
     return NextResponse.json(
-      { error: '语音服务配置不完整，请联系管理员' },
-      { status: 500 }
+      { error: '非法请求来源' },
+      { status: 403 }
     );
   }
 
@@ -33,38 +32,47 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const cleanText = cleanMarkdown(text);
+    const cleanText = cleanTtsText(text);
 
-    const response = await fetch(`${ALIBABA_BASE_URL}/audio/speech`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${ALIBABA_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: TTS_MODEL,
-        input: cleanText,
-        voice: TTS_VOICE,
-        response_format: 'mp3',
-        speed: 1.0,
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('阿里云 TTS 错误:', response.status, errText);
+    if (!cleanText) {
       return NextResponse.json(
-        { error: '语音合成服务暂时不可用，请稍后重试' },
-        { status: 502 }
+        { error: '文本内容为空，无法生成语音' },
+        { status: 400 }
       );
     }
 
-    return new Response(response.body, {
+    if (cleanText.length > MAX_TTS_TEXT_LENGTH) {
+      return NextResponse.json(
+        { error: `文本过长，请控制在 ${MAX_TTS_TEXT_LENGTH} 个字符以内` },
+        { status: 413 }
+      );
+    }
+
+    const { audio, contentType } = await synthesizeSpeech({
+      text: cleanText,
+      traceId: randomUUID(),
+    });
+
+    return new Response(new Uint8Array(audio), {
       headers: {
-        'Content-Type': 'audio/mpeg',
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store',
       },
     });
   } catch (error) {
+    if (error instanceof TtsError) {
+      if (error.logMessage) {
+        console.error(error.logMessage);
+      } else {
+        console.error('TTS 路由错误:', error);
+      }
+
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status }
+      );
+    }
+
     console.error('TTS 路由错误:', error);
     return NextResponse.json(
       { error: '语音合成服务内部错误' },

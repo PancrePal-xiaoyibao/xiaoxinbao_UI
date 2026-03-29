@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: 构建与检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 签出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: ESLint 检查
+        run: npm run lint
+
+      - name: TypeScript 类型检查
+        run: npx tsc --noEmit
+
+      - name: 构建项目
+        run: npm run build
+        env:
+          # CI 构建使用占位值，仅验证构建流程
+          CHAT_API_URL: https://placeholder.example.com
+          CHAT_API_KEY: ci-placeholder
+          ALIBABA_API_KEY: ci-placeholder

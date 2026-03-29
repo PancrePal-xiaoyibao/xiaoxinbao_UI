@@ -39,14 +39,31 @@ A mental support AI agent for cancer patients.
 To connect the application to your backend, create a `.env.local` file in the root directory and fill in the following information:
 
 ```env
-# Upstream API URL
-NEXT_PUBLIC_API_URL=https://admin.xiaoyibao.com.cn/api/v1/chat/completions
-
-# Your API Bearer Token
+# Chat upstream
+CHAT_API_URL=https://admin.xiaoyibao.com.cn/api/v1/chat/completions
 CHAT_API_KEY=your_secret_key_here
+
+# TTS provider: alibaba / doubao
+TTS_PROVIDER=alibaba
+
+# Alibaba TTS
+ALIBABA_API_KEY=your_alibaba_api_key_here
+ALIBABA_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# Doubao TTS
+DOUBAO_TTS_APP_ID=your_doubao_app_id_here
+DOUBAO_TTS_ACCESS_KEY=your_doubao_access_token_here
+DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_SPEAKER=zh_female_cancan_mars_bigtts
 ```
 
 Refer to `.env.example` for the templates.
+
+Security notes:
+
+* TTS 密钥只能放在服务端环境变量中，不要使用 `NEXT_PUBLIC_*` 前缀。
+* 前端始终只调用站内 `/api/tts`，由 Next.js 服务端代理到上游语音服务。
+* 如切换到豆包 TTS，建议继续保留网关层限流，避免公开接口被刷额度。
 
 
 ## Features

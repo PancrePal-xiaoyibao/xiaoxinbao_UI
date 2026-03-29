@@ -39,6 +39,9 @@ yarn-error.log*
 .env*.local
 .env
 
+# dotenvx 私钥（绝对不能提交）
+.env.keys
+
 # vercel
 .vercel
 
