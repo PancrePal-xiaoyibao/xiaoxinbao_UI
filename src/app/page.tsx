@@ -1,23 +1,43 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useChatStore } from '@/store/useChatStore';
 import WelcomeModal from '@/components/WelcomeModal';
 import ChatInterface from '@/components/ChatInterface';
 
+function subscribeToHydration(onStoreChange: () => void) {
+  const unsubscribeHydrate = useChatStore.persist.onHydrate(onStoreChange);
+  const unsubscribeFinishHydration =
+    useChatStore.persist.onFinishHydration(onStoreChange);
+
+  return () => {
+    unsubscribeHydrate();
+    unsubscribeFinishHydration();
+  };
+}
+
 export default function Home() {
-  const { hasAgreed, initUser } = useChatStore();
-  const [isMounted, setIsMounted] = useState(false);
+  const hasAgreed = useChatStore((state) => state.hasAgreed);
+  const initUser = useChatStore((state) => state.initUser);
+  const isHydrated = useSyncExternalStore(
+    subscribeToHydration,
+    () => useChatStore.persist.hasHydrated(),
+    () => false
+  );
 
   useEffect(() => {
-    useChatStore.persist.rehydrate();
-    initUser();
-    setIsMounted(true);
-  }, [initUser]);
+    void useChatStore.persist.rehydrate();
+  }, []);
+
+  useEffect(() => {
+    if (isHydrated) {
+      initUser();
+    }
+  }, [initUser, isHydrated]);
 
   // Prevent hydration mismatch by not rendering until client-side
-  if (!isMounted) {
+  if (!isHydrated) {
     return <div className="h-screen w-screen bg-stone-50" />;
   }
 

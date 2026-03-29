@@ -54,7 +54,7 @@ export const useChatStore = create<ChatState>()(
       initUser: () => {
         const { userId, sessions, activeSessionId } = get();
 
-        let newState: Partial<ChatState> = {};
+        const newState: Partial<ChatState> = {};
 
         if (!userId) {
           newState.userId = generateUUID();

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NODE_ENV=development node dev-server.js",
-    "dev:https": "HTTPS=true NODE_ENV=development node dev-server.js",
+    "dev": "NODE_ENV=development node dev-server.mjs",
+    "dev:https": "HTTPS=true NODE_ENV=development node dev-server.mjs",
     "dev:legacy": "next dev -H 0.0.0.0",
     "build": "next build",
     "start": "next start -H 0.0.0.0",

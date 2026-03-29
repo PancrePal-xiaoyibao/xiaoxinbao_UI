@@ -1,6 +1,6 @@
 'use client';
 
-import { useChatStore, ChatSession } from '@/store/useChatStore';
+import { useChatStore } from '@/store/useChatStore';
 import { Plus, MessageSquare, Trash2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
