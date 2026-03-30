@@ -63,15 +63,15 @@ func Errorf(format string, args ...any) {
 }
 
 func ContextLogf(ctx context.Context, format string, args ...any) {
-	defaultLogger.Logf(withRequestContext(ctx, format, args...))
+	defaultLogger.Logf("%s", withRequestContext(ctx, format, args...))
 }
 
 func ContextDebugf(ctx context.Context, format string, args ...any) {
-	defaultLogger.Debugf(withRequestContext(ctx, format, args...))
+	defaultLogger.Debugf("%s", withRequestContext(ctx, format, args...))
 }
 
 func ContextErrorf(ctx context.Context, format string, args ...any) {
-	defaultLogger.Errorf(withRequestContext(ctx, format, args...))
+	defaultLogger.Errorf("%s", withRequestContext(ctx, format, args...))
 }
 
 func (l *Logger) SetLevel(level string) {

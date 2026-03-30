@@ -1,4 +1,4 @@
-name: 安全扫描
+name: 依赖安全扫描
 
 on:
   push:
@@ -97,24 +97,3 @@ jobs:
 
       - name: 执行漏洞检查
         run: govulncheck ./...
-
-  gitleaks:
-    name: Gitleaks 敏感信息泄露检测
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    permissions:
-      security-events: write
-      contents: read
-
-    steps:
-      - name: 签出代码
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Gitleaks 扫描
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

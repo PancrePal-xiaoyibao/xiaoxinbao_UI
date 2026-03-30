@@ -29,6 +29,8 @@
 npm install
 ```
 
+后端需要 Go 1.25.8 或更高版本；仓库已在 `backend/go.mod` 中锁定该版本，旧版本 Go 在执行 `go run`、`go build`、`go test` 时会继续触发标准库漏洞告警。
+
 2. 配置前端环境变量
 
 根目录创建 `.env.local`：
