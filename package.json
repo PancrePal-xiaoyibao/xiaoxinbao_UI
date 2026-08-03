@@ -17,16 +17,16 @@
     "env:keys": "dotenvx genexample"
   },
   "dependencies": {
-    "@tailwindcss/typography": "^0.5.19",
+    "@tailwindcss/typography": "^0.5.20",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.23.26",
-    "lucide-react": "^1.7.0",
+    "framer-motion": "^12.43.0",
+    "lucide-react": "^1.28.0",
     "next": "16.2.12",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-markdown": "^10.1.0",
-    "tailwind-merge": "^3.4.0",
-    "zustand": "^5.0.9"
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@dotenvx/dotenvx": "^1.59.1",
@@ -40,6 +40,6 @@
     "typescript": "^6"
   },
   "optionalDependencies": {
-    "lightningcss-linux-x64-gnu": "^1.30.2"
+    "lightningcss-linux-x64-gnu": "^1.33.0"
   }
 }
